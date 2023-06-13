@@ -230,10 +230,6 @@ func (c *Client) DoClock(jobCode string, shift *Shift) error {
 	return c.doPost("/station/newPostSign", &body, nil)
 }
 
-func (c *Client) ClockOut() error {
-	return nil
-}
-
 type responseMessage struct {
 	Code int    `json:"code"`
 	Msg  string `json:"msg"`

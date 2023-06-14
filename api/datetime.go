@@ -53,3 +53,26 @@ func (d *JsonDateTime) UnmarshalJSON(data []byte) error {
 	*d = JsonDateTime(t)
 	return nil
 }
+
+const DateNoYear = "01-02"
+
+// JsonDateNoYear is encoded as MM-dd.
+type JsonDateNoYear time.Time
+
+func (d *JsonDateNoYear) MarshalJSON() ([]byte, error) {
+	return timeToJson(time.Time(*d), DateNoYear), nil
+}
+
+func (d *JsonDateNoYear) UnmarshalJSON(data []byte) error {
+	t, err := jsonToTime(data, DateNoYear)
+	if err != nil {
+		return err
+	}
+	*d = JsonDateNoYear(t)
+	return nil
+}
+
+func (d *JsonDateNoYear) WithYear(year int) time.Time {
+	t := time.Time(*d)
+	return time.Date(year, t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), t.Location())
+}

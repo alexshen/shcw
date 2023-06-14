@@ -15,15 +15,17 @@ import (
 	"time"
 
 	"github.com/alexshen/shcw/api"
+	"github.com/alexshen/shcw/cal"
 	"github.com/alexshen/shcw/flagutils"
 )
 
 var (
-	fLog      = flag.String("log", "cw.log", "path to the log file")
-	fUsername = flag.String("username", "", "username")
-	fAddress  = flag.String("address", "", "name for the gps position")
-	fAction   = flagutils.Choice("action", []string{"clockin", "clockout"}, "", "valid actions are clockin, clockout")
-	fGPS      gpsValue
+	fLog         = flag.String("log", "cw.log", "path to the log file")
+	fUsername    = flag.String("username", "", "username")
+	fAddress     = flag.String("address", "", "name for the gps position")
+	fAction      = flagutils.Choice("action", []string{"clockin", "clockout"}, "", "valid actions are clockin, clockout")
+	fHolidayJSON = flag.String("holidays", "holidays.json", "path to to the holidays json file")
+	fGPS         gpsValue
 )
 
 func init() {
@@ -123,7 +125,7 @@ func doClock(client *api.Client, clockIn bool) {
 			}
 			log.Printf("job %s clocked in at %v", shift.Job.Name, shift.ClockInTime)
 			numClocked++
-			} else {
+		} else {
 			if !shift.ClockOutTime.IsZero() {
 				log.Printf("job %s already clocked out", shift.Job.Name)
 				continue
@@ -155,10 +157,27 @@ func main() {
 	}
 	defer initLogging()()
 
+	calendar, err := cal.NewJsonCalendar(*fHolidayJSON)
+	if err != nil {
+		log.Fatal(err)
+	}
+	// do nothing if today is holiday or weekend
+	if res, err := calendar.IsHoliday(today()); err == nil && res {
+		log.Printf("today is weekday")
+		return
+	}
+	switch today().Weekday() {
+	case time.Sunday:
+	case time.Saturday:
+		log.Printf("today is weekend")
+		return
+	}
+
 	password, err := readPassword()
 	if err != nil {
 		log.Fatal("failed to read password:", err)
 	}
+
 	client := api.New(*fUsername, password, api.GPSCoords(fGPS), *fAddress)
 	if err := client.Login(); err != nil {
 		log.Fatal("failed to login:", err)
@@ -170,7 +189,5 @@ func main() {
 		actionClock(client, true)
 	case "clockout":
 		actionClock(client, false)
-	default:
-		log.Fatal("invalid action: ", *fAction)
 	}
 }

@@ -82,7 +82,6 @@ func initLogging() func() {
 }
 
 func approveApplications(client *api.Client) {
-	var numApproved int
 	for _, job := range client.Jobs() {
 		shift := job.GetShift(today())
 		if shift == nil {
@@ -93,7 +92,7 @@ func approveApplications(client *api.Client) {
 			log.Print(err)
 			continue
 		}
-		log.Printf("job: %s, num of applications: %d", job.Name, len(apps))
+		log.Printf("job: %s", job.Name)
 		// approve all applications
 		for _, app := range apps {
 			if err := client.Approve(&app); err != nil {
@@ -101,51 +100,41 @@ func approveApplications(client *api.Client) {
 				continue
 			}
 			log.Printf("approved user: %s", app.UserName)
-			numApproved++
 		}
 	}
-	log.Printf("num of approved applications: %d", numApproved)
 }
 
 func doClock(client *api.Client, clockIn bool) {
-	var numClocked int
 	for _, shift := range client.MyShifts() {
 		if shift.OpenDate != today() || shift.State == api.NotApproved {
 			continue
 		}
 
+		log.Printf("job: %s", shift.Job.Name)
 		if clockIn {
 			if !shift.ClockInTime.IsZero() {
-				log.Printf("job %s already clocked in", shift.Job.Name)
+				log.Print("already clocked in")
 				continue
 			}
 			if err := client.DoClock(&shift); err != nil {
 				log.Print(err)
 				continue
 			}
-			log.Printf("job %s clocked in at %v", shift.Job.Name, shift.ClockInTime)
-			numClocked++
+			log.Printf("clocked in at %v", shift.ClockInTime)
 		} else {
 			if !shift.ClockOutTime.IsZero() {
-				log.Printf("job %s already clocked out", shift.Job.Name)
+				log.Print("already clocked out")
 				continue
 			}
-			log.Printf("job %s clocked out at %v", shift.Job.Name, shift.ClockOutTime)
-			numClocked++
+			log.Printf("clocked out at %v", shift.ClockOutTime)
 		}
 	}
-	log.Printf("num of clocked shifts: %d", numClocked)
 }
 
 func actionClock(client *api.Client, clockIn bool) {
 	if err := client.FetchJobs(); err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("number of jobs: %d", len(client.Jobs()))
-	for _, job := range client.Jobs() {
-		log.Printf("job %s", job.Name)
-	}
-
 	approveApplications(client)
 	doClock(client, clockIn)
 }

@@ -26,10 +26,15 @@ type Job struct {
 }
 
 type Shift struct {
-	ApplyCode string
-	UnitCode  string
+	*Job
+	UnitCode string
 	// when the shift is open for application
-	OpenDate     time.Time
+	OpenDate time.Time
+}
+
+type UserShift struct {
+	*Shift
+	ApplyCode    string
 	ClockInTime  time.Time
 	ClockOutTime time.Time
 	State        ShiftState
@@ -56,9 +61,10 @@ type Client struct {
 	gps      GPSCoords
 	address  string
 
-	userId int
-	client *resty.Client
-	jobs   []Job
+	userId   int
+	client   *resty.Client
+	jobs     []Job
+	myShifts []UserShift
 }
 
 func New(username string, password string, gps GPSCoords, address string) *Client {
@@ -99,8 +105,10 @@ func (c *Client) UserId() int {
 }
 
 // FetchJobs fetches the jobs from the server.
-func (c *Client) FetchJobs() ([]Job, error) {
+func (c *Client) FetchJobs() error {
 	c.jobs = nil
+	c.myShifts = nil
+
 	// TODO: For now, jobs only open for 1 month, so PageSize of 31 is enough.
 	body := struct {
 		User       int `json:"user"`
@@ -125,7 +133,7 @@ func (c *Client) FetchJobs() ([]Job, error) {
 		} `json:"records"`
 	}{}
 	if err := c.doPost("/station/userTicket/queryPersonalPostByUserAndStatus", body, &data); err != nil {
-		return nil, err
+		return err
 	}
 	for _, r := range data.Records {
 		if len(r.List.Value) == 0 {
@@ -138,33 +146,42 @@ func (c *Client) FetchJobs() ([]Job, error) {
 		}
 		for i, s := range r.List.Value {
 			job.Shifts[i] = Shift{
+				Job:      &job,
+				UnitCode: s.UnitCode,
+				OpenDate: time.Time(s.OpenDate),
+			}
+			c.myShifts = append(c.myShifts, UserShift{
+				Shift:        &job.Shifts[i],
 				ApplyCode:    s.ApplyCode,
-				UnitCode:     s.UnitCode,
-				OpenDate:     time.Time(s.OpenDate),
 				ClockInTime:  time.Time(s.ClockInTime),
 				ClockOutTime: time.Time(s.ClockOutTime),
 				State:        ShiftState(s.State),
 				Settled:      s.Settled != 0,
-			}
+			})
 		}
 		c.jobs = append(c.jobs, job)
 	}
-	return c.jobs, nil
+	return nil
 }
 
 func (c *Client) Jobs() []Job {
 	return c.jobs
 }
 
+func (c *Client) MyShifts() []UserShift {
+	return c.myShifts
+}
+
 type ShiftApplication struct {
-	UnitCode    string `json:"pkUnitCode"`
+	UnitCode    string
+	Code        string `json:"code"`
 	UserId      int    `json:"user,string"`
 	UserName    string
 	Ticket      string `json:"ticket"`
 	TicketOrder string `json:"ticketOrder"`
 }
 
-func (c *Client) FetchApplications(shiftUnitCode string) ([]ShiftApplication, error) {
+func (c *Client) FetchApplications(shift *Shift) ([]ShiftApplication, error) {
 	body := struct {
 		UnitCode   string `json:"pkUnitCode"`
 		UserId     int    `json:"user,string"`
@@ -173,7 +190,7 @@ func (c *Client) FetchApplications(shiftUnitCode string) ([]ShiftApplication, er
 		PageSize   int    `json:"pageSize"`
 		Settled    int    `json:"isSettle"`
 	}{
-		UnitCode:   shiftUnitCode,
+		UnitCode:   shift.UnitCode,
 		State:      int(NotApproved),
 		PageNumber: 1,
 		PageSize:   31,
@@ -181,13 +198,13 @@ func (c *Client) FetchApplications(shiftUnitCode string) ([]ShiftApplication, er
 
 	type record struct {
 		ShiftApplication
-		NickName json.RawMessage `json:"nickName"`
+		NickName string `json:"nickName"`
 	}
 	var data struct {
 		Records []record `json:"records"`
 	}
 	if err := c.doPost("/station/postApply/auditList", &body, &data); err != nil {
-		return nil, fmt.Errorf("fetch %s: %v", shiftUnitCode, err)
+		return nil, fmt.Errorf("fetch %s: %v", shift.UnitCode, err)
 	}
 	return lo.Map(data.Records, func(e record, i int) ShiftApplication {
 		e.ShiftApplication.UserName = string(e.NickName)
@@ -201,10 +218,22 @@ func (c *Client) Approve(app *ShiftApplication) error {
 		State int `json:"state"`
 	}{app, int(Approved)}
 
-	return c.doPost("/station/postApply/audit", &body, nil)
+	if err := c.doPost("/station/postApply/audit", &body, nil); err != nil {
+		return err
+	}
+	// update the shift state for my shift
+	if app.UserId == c.userId {
+		_, i, _ := lo.FindIndexOf(c.myShifts, func(e UserShift) bool {
+			return e.ApplyCode == app.Code
+		})
+		if i != -1 {
+			c.myShifts[i].State = Approved
+		}
+	}
+	return nil
 }
 
-func (c *Client) DoClock(jobCode string, shift *Shift) error {
+func (c *Client) DoClock(shift *UserShift) error {
 	body := struct {
 		User         int    `json:"user"`
 		JobCode      string `json:"pkPostCode"`
@@ -217,7 +246,7 @@ func (c *Client) DoClock(jobCode string, shift *Shift) error {
 		Address string `json:"address"`
 	}{
 		User:         c.userId,
-		JobCode:      jobCode,
+		JobCode:      shift.Job.Code,
 		LocationType: "GPS",
 		SourceType:   1,
 		OptionUser:   c.userId,
@@ -227,7 +256,16 @@ func (c *Client) DoClock(jobCode string, shift *Shift) error {
 		Address:      c.address,
 	}
 
-	return c.doPost("/station/newPostSign", &body, nil)
+	if err := c.doPost("/station/newPostSign", &body, nil); err != nil {
+		return err
+	}
+	// set the local clocking time as the server do not return anything useful
+	if shift.ClockInTime.IsZero() {
+		shift.ClockInTime = time.Now()
+	} else if shift.ClockOutTime.IsZero() {
+		shift.ClockOutTime = time.Now()
+	}
+	return nil
 }
 
 type responseMessage struct {

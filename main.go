@@ -77,48 +77,48 @@ func initLogging() func() {
 	return func() {}
 }
 
-func approveApplications(client *api.Client, jobs []api.Job) {
+func approveApplications(client *api.Client) {
 	var numApproved int
-	for _, job := range jobs {
+	for _, job := range client.Jobs() {
 		shift := job.GetShift(today())
 		if shift == nil {
 			continue
 		}
-		apps, err := client.FetchApplications(shift.UnitCode)
+		apps, err := client.FetchApplications(shift)
 		if err != nil {
 			log.Print(err)
 			continue
 		}
+		log.Printf("job: %s, num of applications: %d", job.Name, len(apps))
 		// approve all applications
 		for _, app := range apps {
 			if err := client.Approve(&app); err != nil {
 				log.Print(err)
 				continue
 			}
-			log.Printf("approved job: %s, open date: %v, user: %s", job.Name, shift.OpenDate, app.UserName)
+			log.Printf("approved user: %s", app.UserName)
 			numApproved++
 		}
 	}
 	log.Printf("num of approved applications: %d", numApproved)
 }
 
-func doClock(client *api.Client, jobs []api.Job) {
+func doClock(client *api.Client) {
 	var numClocked int
-	for _, job := range jobs {
-		shift := job.GetShift(today())
-		if shift == nil {
+	for _, shift := range client.MyShifts() {
+		if shift.OpenDate != today() || shift.State == api.NotApproved {
 			continue
 		}
 
 		if shift.ClockInTime.IsZero() || shift.ClockOutTime.IsZero() {
-			if err := client.DoClock(job.Code, shift); err != nil {
+			if err := client.DoClock(&shift); err != nil {
 				log.Print(err)
 				continue
 			}
 			if shift.ClockInTime.IsZero() {
-				log.Printf("job %s clocked in at %v", job.Name, time.Now().Local())
+				log.Printf("job %s clocked in at %v", shift.Job.Name, time.Now().Local())
 			} else {
-				log.Printf("job %s clocked out at %v", job.Name, time.Now().Local())
+				log.Printf("job %s clocked out at %v", shift.Job.Name, time.Now().Local())
 			}
 			numClocked++
 		}
@@ -140,15 +140,11 @@ func main() {
 	}
 	log.Printf("user %s has logged in", *fUsername)
 
-	jobs, err := client.FetchJobs()
-	if err != nil {
+	if err := client.FetchJobs(); err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("number of jobs: %d", len(jobs))
-	for _, job := range jobs {
-		log.Printf("job %s", job.Name)
-	}
+	log.Printf("number of jobs: %d", len(client.Jobs()))
 
-	approveApplications(client, jobs)
-	doClock(client, jobs)
+	approveApplications(client)
+	doClock(client)
 }

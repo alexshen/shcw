@@ -15,12 +15,14 @@ import (
 	"time"
 
 	"github.com/alexshen/shcw/api"
+	"github.com/alexshen/shcw/flagutils"
 )
 
 var (
 	fLog      = flag.String("log", "cw.log", "path to the log file")
 	fUsername = flag.String("username", "", "username")
 	fAddress  = flag.String("address", "", "name for the gps position")
+	fAction   = flagutils.Choice("action", []string{"clockin", "clockout"}, "", "valid actions are clockin, clockout")
 	fGPS      gpsValue
 )
 
@@ -103,31 +105,54 @@ func approveApplications(client *api.Client) {
 	log.Printf("num of approved applications: %d", numApproved)
 }
 
-func doClock(client *api.Client) {
+func doClock(client *api.Client, clockIn bool) {
 	var numClocked int
 	for _, shift := range client.MyShifts() {
 		if shift.OpenDate != today() || shift.State == api.NotApproved {
 			continue
 		}
 
-		if shift.ClockInTime.IsZero() || shift.ClockOutTime.IsZero() {
+		if clockIn {
+			if !shift.ClockInTime.IsZero() {
+				log.Printf("job %s already clocked in", shift.Job.Name)
+				continue
+			}
 			if err := client.DoClock(&shift); err != nil {
 				log.Print(err)
 				continue
 			}
-			if shift.ClockInTime.IsZero() {
-				log.Printf("job %s clocked in at %v", shift.Job.Name, time.Now().Local())
+			log.Printf("job %s clocked in at %v", shift.Job.Name, shift.ClockInTime)
+			numClocked++
 			} else {
-				log.Printf("job %s clocked out at %v", shift.Job.Name, time.Now().Local())
+			if !shift.ClockOutTime.IsZero() {
+				log.Printf("job %s already clocked out", shift.Job.Name)
+				continue
 			}
+			log.Printf("job %s clocked out at %v", shift.Job.Name, shift.ClockOutTime)
 			numClocked++
 		}
 	}
 	log.Printf("num of clocked shifts: %d", numClocked)
 }
 
+func actionClock(client *api.Client, clockIn bool) {
+	if err := client.FetchJobs(); err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("number of jobs: %d", len(client.Jobs()))
+	for _, job := range client.Jobs() {
+		log.Printf("job %s", job.Name)
+	}
+
+	approveApplications(client)
+	doClock(client, clockIn)
+}
+
 func main() {
 	flag.Parse()
+	if fAction.String() == "" {
+		log.Fatal("action not specified")
+	}
 	defer initLogging()()
 
 	password, err := readPassword()
@@ -140,11 +165,12 @@ func main() {
 	}
 	log.Printf("user %s has logged in", *fUsername)
 
-	if err := client.FetchJobs(); err != nil {
-		log.Fatal(err)
+	switch fAction.String() {
+	case "clockin":
+		actionClock(client, true)
+	case "clockout":
+		actionClock(client, false)
+	default:
+		log.Fatal("invalid action: ", *fAction)
 	}
-	log.Printf("number of jobs: %d", len(client.Jobs()))
-
-	approveApplications(client)
-	doClock(client)
 }

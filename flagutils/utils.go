@@ -2,6 +2,7 @@ package flagutils
 
 import (
 	"flag"
+	"fmt"
 	"strings"
 )
 
@@ -37,4 +38,36 @@ func List(name string, def string, usage string) *ListArg {
 	}
 	flag.Var(&value, name, usage)
 	return &value
+}
+
+type ChoiceArg struct {
+	choices []string
+	value   string
+}
+
+func (f *ChoiceArg) String() string {
+	return f.value
+}
+
+func (f *ChoiceArg) Set(value string) error {
+	for _, c := range f.choices {
+		if c == value {
+			f.value = value
+			return nil
+		}
+	}
+	return fmt.Errorf("expected %v", f.choices)
+}
+
+func Choice(name string, choices []string, def string, usage string) *ChoiceArg {
+	arg := ChoiceArg{
+		choices: choices,
+	}
+	if def != "" {
+		if err := arg.Set(def); err != nil {
+			panic(err)
+		}
+	}
+	flag.Var(&arg, name, usage)
+	return &arg
 }

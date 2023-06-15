@@ -126,6 +126,10 @@ func doClock(client *api.Client, clockIn bool) {
 				log.Print("already clocked out")
 				continue
 			}
+			if err := client.DoClock(&shift); err != nil {
+				log.Print(err)
+				continue
+			}
 			log.Printf("clocked out at %v", shift.ClockOutTime)
 		}
 	}

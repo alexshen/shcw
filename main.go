@@ -92,7 +92,9 @@ func approveApplications(client *api.Client) {
 			log.Print(err)
 			continue
 		}
-		log.Printf("job: %s", job.Name)
+		if len(apps) > 0 {
+			log.Printf("job: %s", job.Name)
+		}
 		// approve all applications
 		for _, app := range apps {
 			if err := client.Approve(&app); err != nil {
@@ -120,7 +122,7 @@ func doClock(client *api.Client, clockIn bool) {
 				log.Print(err)
 				continue
 			}
-			log.Printf("clocked in at %v", shift.ClockInTime)
+			log.Printf("clocked in")
 		} else {
 			if !shift.ClockOutTime.IsZero() {
 				log.Print("already clocked out")
@@ -130,7 +132,7 @@ func doClock(client *api.Client, clockIn bool) {
 				log.Print(err)
 				continue
 			}
-			log.Printf("clocked out at %v", shift.ClockOutTime)
+			log.Printf("clocked out")
 		}
 	}
 }
